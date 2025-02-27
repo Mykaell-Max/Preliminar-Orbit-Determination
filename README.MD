@@ -88,3 +88,55 @@ Orbit determination methods are based on:
 - Gauss's method for initial orbit determination
 - Differential correction for orbit refinement
 - Two-body problem integration for orbit propagation
+
+## Process diagram
+
+```mermaid
+flowchart TD
+    A[Input: Observation Data\nRA, DEC, Timestamps] --> B[Convert to Cartesian\nDirection Vectors]
+    B --> C[Get Earth Position\nand Velocity]
+    C --> D{Initial Orbit\nDetermination}
+    
+    D -->|Collinear observations| E[Alternative Method\nUsing Angular Velocity]
+    D -->|Non-collinear observations| F[Classical Gauss Method]
+    
+    E --> G[Initial r0, v0 Estimate]
+    F --> G
+    
+    G --> H[Differential Correction Loop]
+    
+    H --> I[Light-Travel Time\nCorrection]
+    I --> J[Propagate Orbit]
+    J --> K[Calculate Residuals]
+    K --> L{Convergence\nCheck}
+    
+    L -->|Not Converged| I
+    L -->|Converged| M[Calculate Final\nOrbital Elements]
+    
+    M --> N[Output:\n- Semi-major axis (a)\n- Eccentricity (e)\n- Inclination (i)\n- Longitude of Ascending Node (Ω)\n- Argument of Periapsis (ω)\n- True Anomaly (θ)]
+    
+    subgraph "Differential Correction"
+        H
+        I
+        J
+        K
+        L
+    end
+    
+    subgraph "Initial Orbit Determination"
+        D
+        E
+        F
+        G
+    end
+    
+    subgraph "Solution Validation"
+        O[Check for\nHyperbolic Solutions]
+        P[Check Eccentricity]
+        Q[Check Semi-major Axis]
+    end
+    
+    M --> O
+    M --> P
+    M --> Q
+```
