@@ -113,7 +113,7 @@ flowchart TD
     L -->|Not Converged| I
     L -->|Converged| M[Calculate Final\nOrbital Elements]
     
-    M --> N[Output:\n- Semi-major axis (a)\n- Eccentricity (e)\n- Inclination (i)\n- Longitude of Ascending Node (Ω)\n- Argument of Periapsis (ω)\n- True Anomaly (θ)]
+    M --> N["Output:\n- Semi-major axis (a)\n- Eccentricity (e)\n- Inclination (i)\n- Longitude of Ascending Node (Ω)\n- Argument of Periapsis (ω)\n- True Anomaly (θ)"]
     
     subgraph "Differential Correction"
         H
