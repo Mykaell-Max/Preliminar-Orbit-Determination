@@ -93,11 +93,11 @@ Orbit determination methods are based on:
 
 ```mermaid
 flowchart TD
-    A[Input: Observation Data\nRA, DEC, Timestamps] --> B[Convert to Cartesian\nDirection Vectors]
-    B --> C[Get Earth Position\nand Velocity]
-    C --> D{Initial Orbit\nDetermination}
+    A[Input: Observation Data RA, DEC, Timestamps] --> B[Convert to Cartesian Direction Vectors]
+    B --> C[Get Earth Position and Velocity]
+    C --> D{Initial Orbit Determination}
     
-    D -->|Collinear observations| E[Alternative Method\nUsing Angular Velocity]
+    D -->|Collinear observations| E[Alternative Method Using Angular Velocity]
     D -->|Non-collinear observations| F[Classical Gauss Method]
     
     E --> G[Initial r0, v0 Estimate]
@@ -105,15 +105,15 @@ flowchart TD
     
     G --> H[Differential Correction Loop]
     
-    H --> I[Light-Travel Time\nCorrection]
+    H --> I[Light-Travel Time Correction]
     I --> J[Propagate Orbit]
     J --> K[Calculate Residuals]
-    K --> L{Convergence\nCheck}
+    K --> L{Convergence Check}
     
     L -->|Not Converged| I
-    L -->|Converged| M[Calculate Final\nOrbital Elements]
+    L -->|Converged| M[Calculate Final Orbital Elements]
     
-    M --> N["Output:\n- Semi-major axis (a)\n- Eccentricity (e)\n- Inclination (i)\n- Longitude of Ascending Node (Ω)\n- Argument of Periapsis (ω)\n- True Anomaly (θ)"]
+    M --> N["Output:- Semi-major axis (a)- Eccentricity (e)- Inclination (i)- Longitude of Ascending Node (Ω)- Argument of Periapsis (ω)- True Anomaly (θ)"]
     
     subgraph "Differential Correction"
         H
