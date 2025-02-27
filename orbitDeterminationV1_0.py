@@ -608,9 +608,9 @@ def process_asteroid(name, observations):
       print(f"i real ≈ {i_real:.2f}°, diferença: {abs(i - i_real):.2f}°")
    
    elif name == "2023 DZ2":
-      a_real = 1.0039
-      e_real = 0.1837
-      i_real = 6.6
+      a_real = 2.082
+      e_real = 0.5242
+      i_real = 0.15
       print("\n### Comparação com elementos reais (2023 DZ2) ###")
       print(f"a real ≈ {a_real:.4f} UA, diferença: {abs(a - a_real):.4f} UA")
       print(f"e real ≈ {e_real:.4f}, diferença: {abs(e - e_real):.4f}")
