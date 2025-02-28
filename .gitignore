@@ -1,4 +1,7 @@
 module.test.py
-orbit-v0.py
-orbitPlotting.ipynb
+orbitDeterminationV0.py
+plotting
 de440.bsp
+**/__pycache__
+notes
+orbitDeterminationV2
