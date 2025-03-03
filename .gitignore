@@ -4,6 +4,6 @@ de440.bsp
 **/__pycache__
 notes
 orbitDeterminationV2
-v1_0.test.py
-v1_1.test.py
+**.test.py
 orbit_determination.log
+orbitDeterminationV1_2.py
