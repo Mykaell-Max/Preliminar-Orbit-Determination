@@ -249,12 +249,17 @@ def iod_initial_estimate(R, rho_hat, t):
       rho_hat (list): List of unit direction vectors
       t (list): List of datetime objects
    """
-   idx = [0, len(R) // 2, -1] 
+   if len(R) == 4:
+      R_select = np.array(R)
+      rho_hat_select = np.array(rho_hat)
+      t_select = t
+
    if len(R) >= 4: # para um caso mais geral, teste com mais de 4 observaççoes
       idx = [0, len(R) // 3, 2 * len(R) // 3, -1]
-   R_select = np.array([R[i] for i in idx])
-   rho_hat_select = np.array([rho_hat[i] for i in idx])
-   t_select = [t[i] for i in idx]
+      R_select = np.array([R[i] for i in idx])
+      rho_hat_select = np.array([rho_hat[i] for i in idx])
+      t_select = [t[i] for i in idx]
+      
    t0 = t_select[0]
    dt = [(ti - t0).total_seconds() / 86400 for ti in t_select]
    D = []
