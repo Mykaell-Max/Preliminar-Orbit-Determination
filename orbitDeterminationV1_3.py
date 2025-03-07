@@ -240,6 +240,109 @@ def calculate_f_and_g(dt, r0, mu):
 
 
 # --------------------------------------------------------------------------------------------------------
+def iod_initial_estimate(R, rho_hat, t):
+   """
+   Estimates the initial position and velocity of an object using the method of initial osculating elements
+
+   Args:
+      R (list): List of position vectors (earth)
+      rho_hat (list): List of unit direction vectors
+      t (list): List of datetime objects
+   """
+   if len(R) == 4:
+      R_select = np.array(R)
+      rho_hat_select = np.array(rho_hat)
+      t_select = t
+
+   if len(R) >= 4: # para um caso mais geral, teste com mais de 4 observaççoes
+      idx = [0, len(R) // 3, 2 * len(R) // 3, -1]
+      R_select = np.array([R[i] for i in idx])
+      rho_hat_select = np.array([rho_hat[i] for i in idx])
+      t_select = [t[i] for i in idx]
+      
+   t0 = t_select[0]
+   dt = [(ti - t0).total_seconds() / 86400 for ti in t_select]
+   D = []
+   for i in range(len(rho_hat_select) - 1):
+      D.append(np.cross(rho_hat_select[i], rho_hat_select[i+1]))
+   D_norms = [np.linalg.norm(d) for d in D]
+   is_collinear = any(d_norm < 1e-10 for d_norm in D_norms)
+   if is_collinear:
+      print("Detectadas observações quase colineares. Usando método alternativo.") # caso de observações colineares, é um problema que tive em alguns testes
+      ang_velocities = []
+      for i in range(len(rho_hat) - 1):
+         dot_prod = np.clip(np.dot(rho_hat[i], rho_hat[i+1]), -1.0, 1.0)
+         ang = np.arccos(dot_prod)
+         dt_days = (t[i+1] - t[i]).total_seconds() / 86400
+         ang_velocities.append(ang / dt_days)
+      avg_ang_velocity = np.mean(ang_velocities)
+      
+      # estimar distancia usando velocidade angular media
+      # Para NEOs típicos a ~1AU com velocidade orbital ~30 km/s
+      estimated_rho = 0.01 / avg_ang_velocity if avg_ang_velocity > 1e-10 else 1.5
+      estimated_rho = np.clip(estimated_rho, 0.1, 5.0)
+      r0 = R[0] + estimated_rho * rho_hat[0]
+      dt1 = (t[1] - t[0]).total_seconds() / 86400
+      rho_dot = (rho_hat[1] - rho_hat[0]) / dt1
+      v0 = R[1] - R[0] + estimated_rho * rho_dot
+      return r0, v0 / dt1
+   
+   # metodo classico para nao colineares
+   A = np.zeros((len(rho_hat_select), len(rho_hat_select)))
+   for i in range(len(rho_hat_select)):
+      A[i, i] = 1.0
+      for j in range(len(rho_hat_select)):
+         if i != j:
+               A[i, j] = -np.dot(rho_hat_select[i], rho_hat_select[j])
+   
+   # Vetor de termos independentes
+   b = np.zeros(len(rho_hat_select))
+   for i in range(len(rho_hat_select) - 1):
+      b[i] = np.dot(R_select[i+1] - R_select[i], rho_hat_select[i])
+   b[-1] = np.dot(R_select[0] - R_select[-1], rho_hat_select[-1])
+   try:
+      rho = np.linalg.solve(A, b)
+      if any(r <= 0 or r > 10 for r in rho):
+         print("Distâncias calculadas nao razoáveis.")
+         return None, None
+      r = np.zeros((len(rho_hat_select), 3))
+      for i in range(len(rho_hat_select)):
+         r[i] = R_select[i] + rho[i] * rho_hat_select[i]
+      if len(dt) >= 3:
+         y = r.copy()
+         X = np.column_stack([np.ones(len(dt)), np.array(dt)])
+         coeffs = np.zeros((3, 2))
+         for i in range(3):
+               coeffs[i], _, _, _ = np.linalg.lstsq(X, y[:, i], rcond=None)
+         r0 = coeffs[:, 0]
+         v0 = coeffs[:, 1]
+      else:
+         try: 
+            # teste
+            f1, g1 = calculate_f_and_g(dt[1], r[0], MU_SUN)
+            f2, g2 = calculate_f_and_g(dt[-1], r[0], MU_SUN)
+            A_v = np.array([[f1, g1], [f2, g2]])
+            b_v = np.array([r[1], r[-1]])
+            v0 = np.zeros(3)
+            for i in range(3):
+               sol = np.linalg.lstsq(A_v, [b_v[0][i], b_v[1][i]], rcond=None)[0]
+               v0[i] = sol[1]
+         except:
+               v0 = (r[1] - r[0]) / dt[1]
+
+      v_norm = np.linalg.norm(v0)
+      if v_norm > 0.2:  # > 120 km/s é fisicamente improvável
+         print(f"Velocidade inicial muito alta: {v_norm:.6f} AU/dia")
+         v0 = v0 * (0.1 / v_norm)
+      
+      return r[0], v0
+   
+   except np.linalg.LinAlgError as e:
+      print(f"Erro na estimativa: {e}")
+      return None, None
+
+
+# --------------------------------------------------------------------------------------------------------
 def differential_correction(R, v_earth, rho_hat, t, mu_sun, perturbations=None):
    """
    Applies differential correction to refine the initial estimate of the object's orbit
@@ -256,7 +359,7 @@ def differential_correction(R, v_earth, rho_hat, t, mu_sun, perturbations=None):
       np.array: Refined velocity vector
    """
    r_initial, v_initial = iod_initial_estimate(R, rho_hat, t)
-   print(f"Passou aqui r initial {r_initial} e v initial {v_initial}")
+   
    if r_initial is None:
       best_result = None
       best_cost = float('inf')
@@ -577,333 +680,3 @@ def solar_system_perturbations(t, r, v, t_ref):
       a_indirect = -mu_planet * planet_pos / np.linalg.norm(planet_pos)**3
       a_pert += a_direct + a_indirect
    return a_pert
-
-
-
-def iod_initial_estimate(R, rho_hat, t):
-    """
-    Estimates the initial position and velocity of an object using appropriate methods
-    based on observation characteristics.
-    
-    Args:
-        R (list): List of position vectors (earth)
-        rho_hat (list): List of unit direction vectors
-        t (list): List of datetime objects
-        
-    Returns:
-        np.array: Estimated position vector
-        np.array: Estimated velocity vector
-    """
-    # Check if we have enough observations
-    if len(R) < 3:
-        print("Insufficient observations for initial orbit determination.")
-        return None, None
-    
-    # Test for collinearity in observations
-    D = []
-    for i in range(len(rho_hat) - 1):
-        D.append(np.cross(rho_hat[i], rho_hat[i+1]))
-    D_norms = [np.linalg.norm(d) for d in D]
-    is_collinear = any(d_norm < 1e-10 for d_norm in D_norms)
-    
-    # Select points for IOD based on number of observations
-    if len(R) <= 4:
-        # For few observations, use all available points
-        R_select = np.array(R)
-        rho_hat_select = np.array(rho_hat)
-        t_select = t
-    else:
-        # For many observations, select well-distributed points
-        arc_length = (t[-1] - t[0]).total_seconds() / 86400  # in days
-        
-        if arc_length > 5:  # Long arc case: use wide spacing
-            idx = [0, len(R) // 4, len(R) // 2, 3 * len(R) // 4, -1]
-            idx = idx[:min(5, len(R))]  # Ensure we don't exceed array bounds
-        else:  # Short arc case: prioritize endpoints and middle
-            idx = [0, len(R) // 3, 2 * len(R) // 3, -1]
-            idx = idx[:min(4, len(R))]  # Ensure we don't exceed array bounds
-        
-        R_select = np.array([R[i] for i in idx])
-        rho_hat_select = np.array([rho_hat[i] for i in idx])
-        t_select = [t[i] for i in idx]
-    
-    t0 = t_select[0]
-    dt = [(ti - t0).total_seconds() / 86400 for ti in t_select]
-    
-    # Handle collinear case with angular velocity method
-    if is_collinear:
-        print("Detected nearly collinear observations. Using angular velocity method.")
-        return _handle_collinear_case(R, rho_hat, t)
-    
-    # For short arcs (less than 1 day), use Gauss method with regularization
-    if (t[-1] - t[0]).total_seconds() / 86400 < 1.0:
-        return _short_arc_method(R_select, rho_hat_select, t_select)
-    
-    # Standard method for non-collinear observations
-    return _standard_method(R_select, rho_hat_select, t_select, dt)
-
-def _handle_collinear_case(R, rho_hat, t):
-    """
-    Handle collinear observations using angular velocity estimation.
-    """
-    ang_velocities = []
-    for i in range(len(rho_hat) - 1):
-        dot_prod = np.clip(np.dot(rho_hat[i], rho_hat[i+1]), -1.0, 1.0)
-        ang = np.arccos(dot_prod)
-        dt_days = (t[i+1] - t[i]).total_seconds() / 86400
-        if dt_days > 0:
-            ang_velocities.append(ang / dt_days)
-    
-    # Filter out outliers in angular velocities
-    if len(ang_velocities) > 2:
-        ang_velocities = sorted(ang_velocities)[1:-1]  # Remove min and max
-    
-    avg_ang_velocity = np.mean(ang_velocities) if ang_velocities else 0.01
-    
-    # Estimate range based on angular velocity
-    # More sophisticated model for NEOs based on typical values
-    if avg_ang_velocity < 1e-6:
-        # Very slow motion suggests distant object
-        estimated_rho = 3.0
-    elif avg_ang_velocity < 1e-4:
-        # Moderate motion, could be main belt
-        estimated_rho = 2.0
-    elif avg_ang_velocity < 1e-2:
-        # Faster motion, likely NEO
-        estimated_rho = 0.5
-    else:
-        # Very fast, possibly close approach
-        estimated_rho = 0.2
-    
-    # Ensure reasonable bounds
-    estimated_rho = np.clip(estimated_rho, 0.05, 5.0)
-    
-    # Calculate initial state vector
-    r0 = R[0] + estimated_rho * rho_hat[0]
-    
-    # Use multiple points for velocity if available
-    if len(t) >= 3:
-        # Fit a linear model to positions
-        times = [(ti - t[0]).total_seconds() / 86400 for ti in t[:3]]
-        rho_hat_positions = [rho_hat[i] for i in range(3)]
-        X = np.vstack([np.ones(len(times)), times]).T
-        
-        v0 = np.zeros(3)
-        for i in range(3):
-            y = np.array([rho_hat_positions[j][i] for j in range(len(times))])
-            coeffs = np.linalg.lstsq(X, y, rcond=None)[0]
-            v0[i] = coeffs[1] * estimated_rho
-        
-        # Add Earth's velocity
-        v0 += (R[1] - R[0]) / (times[1])
-    else:
-        # Simple derivative for velocity
-        dt1 = (t[1] - t[0]).total_seconds() / 86400
-        rho_dot = (rho_hat[1] - rho_hat[0]) / dt1
-        v0 = (R[1] - R[0]) / dt1 + estimated_rho * rho_dot
-    
-    # Check velocity magnitude and regularize if needed
-    v_norm = np.linalg.norm(v0)
-    if v_norm > 0.1:  # > ~60 km/s is unlikely
-        v0 = v0 * (0.1 / v_norm)
-    
-    return r0, v0
-
-def _short_arc_method(R, rho_hat, t):
-    """
-    Special method for short arcs using Gauss method with regularization.
-    """
-    # Choose 3 points if we have more
-    if len(R) > 3:
-        idx = [0, len(R) // 2, -1]
-        R = R[idx]
-        rho_hat = rho_hat[idx]
-        t = [t[i] for i in idx]
-    
-    t0 = t[0]
-    tau = [(ti - t0).total_seconds() / 86400 for ti in t]
-    
-    # Gauss f and g series
-    f = [1.0, 
-         1.0 - 0.5 * MU_SUN * tau[1]**2 / np.linalg.norm(R[0])**3,
-         1.0 - 0.5 * MU_SUN * tau[2]**2 / np.linalg.norm(R[0])**3]
-    
-    g = [0.0, 
-         tau[1], 
-         tau[2]]
-    
-    # Set up the determinant system
-    D0 = np.zeros((3, 3))
-    for i in range(3):
-        D0[i, 0] = f[i] * rho_hat[i][0]
-        D0[i, 1] = f[i] * rho_hat[i][1]
-        D0[i, 2] = f[i] * rho_hat[i][2]
-    
-    E = np.zeros((3, 3))
-    for i in range(3):
-        E[i, 0] = g[i] * rho_hat[i][0]
-        E[i, 1] = g[i] * rho_hat[i][1]
-        E[i, 2] = g[i] * rho_hat[i][2]
-    
-    # Calculate determinants
-    D = np.zeros(3)
-    for j in range(3):
-        Dj = D0.copy()
-        for i in range(3):
-            Dj[i, j] = R[i][j]
-        D[j] = np.linalg.det(Dj)
-    
-    D_0 = np.linalg.det(D0)
-    
-    # If determinant is too small, add regularization
-    if abs(D_0) < 1e-10:
-        print("Determinant too small, adding regularization.")
-        for i in range(3):
-            D0[i, i] += 1e-8
-        D_0 = np.linalg.det(D0)
-    
-    # Calculate ranges
-    rho = np.zeros(3)
-    for i in range(3):
-        rho[i] = -np.linalg.det(E) / D_0 if abs(D_0) > 1e-10 else 1.0
-    
-    # Ensure positive ranges
-    if any(r <= 0 for r in rho):
-        print("Negative ranges computed, adjusting.")
-        rho = np.abs(rho)
-        if any(r < 0.1 for r in rho):
-            rho = np.clip(rho, 0.1, 5.0)
-    
-    # Calculate position vectors
-    r = np.zeros((3, 3))
-    for i in range(3):
-        r[i] = R[i] + rho[i] * rho_hat[i]
-    
-    # Calculate velocity using Herrick-Gibbs if arc is very short
-    if tau[2] - tau[0] < 0.2:  # Less than ~5 hours
-        r0, v0 = _herrick_gibbs(r[0], r[1], r[2], tau[0], tau[1], tau[2], MU_SUN)
-    else:
-        # Otherwise use Gauss method for velocity
-        f1, g1 = calculate_f_and_g(tau[1], r[0], MU_SUN)
-        f3, g3 = calculate_f_and_g(tau[2], r[0], MU_SUN)
-        
-        # Set up system for velocity
-        A_v = np.array([[f1, g1], [f3, g3]])
-        v0 = np.zeros(3)
-        
-        for i in range(3):
-            try:
-                b_v = np.array([r[1][i], r[2][i]])
-                sol = np.linalg.lstsq(A_v, b_v, rcond=None)[0]
-                v0[i] = sol[1]  # g coefficient is velocity
-            except np.linalg.LinAlgError:
-                # Fallback to simple difference
-                v0[i] = (r[1][i] - r[0][i]) / tau[1]
-    
-    # Verify physical constraints
-    v_norm = np.linalg.norm(v0)
-    if v_norm > 0.15:  # ~90 km/s
-        print(f"High initial velocity: {v_norm:.6f} AU/day - scaling down")
-        v0 = v0 * (0.1 / v_norm)
-    
-    return r[0], v0
-
-def _standard_method(R, rho_hat, t, dt):
-    """
-    Standard method for well-behaved observations.
-    """
-    # Set up the system of equations
-    A = np.zeros((len(rho_hat), len(rho_hat)))
-    for i in range(len(rho_hat)):
-        A[i, i] = 1.0
-        for j in range(len(rho_hat)):
-            if i != j:
-                A[i, j] = -np.dot(rho_hat[i], rho_hat[j])
-    
-    # Vector of independent terms
-    b = np.zeros(len(rho_hat))
-    for i in range(len(rho_hat) - 1):
-        b[i] = np.dot(R[i+1] - R[i], rho_hat[i])
-    b[-1] = np.dot(R[0] - R[-1], rho_hat[-1])
-    
-    # Add regularization for numerical stability
-    for i in range(len(rho_hat)):
-        A[i, i] += 1e-10
-    
-    try:
-        # Solve the system
-        rho = np.linalg.solve(A, b)
-        
-        # Verify solutions are reasonable
-        if any(r <= 0 or r > 10 for r in rho):
-            print("Calculated ranges are unreasonable, applying constraints.")
-            rho = np.clip(rho, 0.1, 5.0)
-        
-        # Calculate heliocentric position vectors
-        r = np.zeros((len(rho_hat), 3))
-        for i in range(len(rho_hat)):
-            r[i] = R[i] + rho[i] * rho_hat[i]
-        
-        # Determine velocity
-        if len(dt) >= 3:
-            # Linear fit for velocity
-            y = r.copy()
-            X = np.column_stack([np.ones(len(dt)), np.array(dt)])
-            coeffs = np.zeros((3, 2))
-            for i in range(3):
-                coeffs[i], _, _, _ = np.linalg.lstsq(X, y[:, i], rcond=None)
-            r0 = coeffs[:, 0]
-            v0 = coeffs[:, 1]
-        else:
-            # Use f and g series
-            try:
-                f1, g1 = calculate_f_and_g(dt[1], r[0], MU_SUN)
-                f2, g2 = calculate_f_and_g(dt[-1], r[0], MU_SUN)
-                A_v = np.array([[f1, g1], [f2, g2]])
-                b_v = np.array([r[1], r[-1]])
-                v0 = np.zeros(3)
-                for i in range(3):
-                    sol = np.linalg.lstsq(A_v, [b_v[0][i], b_v[1][i]], rcond=None)[0]
-                    v0[i] = sol[1]
-            except:
-                # Simple difference fallback
-                v0 = (r[1] - r[0]) / dt[1]
-        
-        # Physical constraints check
-        v_norm = np.linalg.norm(v0)
-        if v_norm > 0.2:  # > 120 km/s is physically unlikely
-            print(f"Initial velocity too high: {v_norm:.6f} AU/day")
-            v0 = v0 * (0.1 / v_norm)
-        
-        return r[0], v0
-    
-    except np.linalg.LinAlgError as e:
-        print(f"Error in estimate: {e}")
-        return None, None
-
-def _herrick_gibbs(r1, r2, r3, t1, t2, t3, mu):
-    """
-    Herrick-Gibbs method for velocity estimation from three closely spaced position vectors.
-    
-    Args:
-        r1, r2, r3: Three position vectors
-        t1, t2, t3: Times corresponding to positions (days from reference)
-        mu: Gravitational parameter
-    
-    Returns:
-        tuple: (position, velocity) at the middle point
-    """
-    dt12 = t2 - t1
-    dt23 = t3 - t2
-    dt13 = t3 - t1
-    
-    r1_mag = np.linalg.norm(r1)
-    r2_mag = np.linalg.norm(r2)
-    r3_mag = np.linalg.norm(r3)
-    
-    # Coefficients for the Herrick-Gibbs formula
-    v2 = (-dt23**2 * (1/(dt12*dt13) + mu/(12*r1_mag**3)) * r1 + 
-          (dt23**2 - dt12**2) * (1/(dt12*dt23) + mu/(12*r2_mag**3)) * r2 + 
-          dt12**2 * (1/(dt23*dt13) + mu/(12*r3_mag**3)) * r3)
-    
-    return r2, v2
