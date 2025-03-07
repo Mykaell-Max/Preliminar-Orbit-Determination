@@ -205,315 +205,177 @@ def light_travel_correction(rho, t, c=C_LIGHT):
 
 
 # --------------------------------------------------------------------------------------------------------
-def calculate_f_and_g(dt, r0, mu):
-   """
-   Calculates the f and g functions for the universal variable formulation
-
-   Args:
-      dt (float): Time since the initial observation
-      r0 (np.array): Initial position vector
-      mu (float): Gravitational parameter
-   
-   Returns:
-      float: f function
-      float: g function
-   """
-   r0_norm = np.linalg.norm(r0)
-   a0 = -mu * r0 / r0_norm**3
-   f = 1.0 - (mu / (2 * r0_norm**3)) * dt**2 + (mu / (24 * r0_norm**3)) * dt**4
-   g = dt - (mu / (6 * r0_norm**3)) * dt**3 + (mu**2 / (120 * r0_norm**6)) * dt**5
-   if abs(dt) > 1.0:
-        v_circ = np.sqrt(mu / r0_norm)
-        u = dt * v_circ / r0_norm
-        for _ in range(5):
-            c = np.cos(u)
-            s = np.sin(u)
-            f_u = r0_norm * c + np.dot(r0, a0) * s / v_circ - r0_norm
-            f_u_prime = -r0_norm * s + np.dot(r0, a0) * c / v_circ
-            delta_u = -f_u / f_u_prime if abs(f_u_prime) > 1e-10 else 0
-            u += delta_u
-            if abs(delta_u) < 1e-10:
-                break
-        f = 1.0 - (mu / r0_norm) * (1.0 - np.cos(u))
-        g = dt - np.sqrt(r0_norm**3 / mu) * (u - np.sin(u))
-   return f, g
-
-
-# --------------------------------------------------------------------------------------------------------
-def iod_initial_estimate(R, rho_hat, t):
-   """
-   Estimates the initial position and velocity of an object using the method of initial osculating elements
-
-   Args:
-      R (list): List of position vectors (earth)
-      rho_hat (list): List of unit direction vectors
-      t (list): List of datetime objects
-   """
-   if len(R) == 4:
-      R_select = np.array(R)
-      rho_hat_select = np.array(rho_hat)
-      t_select = t
-
-   if len(R) >= 4: # para um caso mais geral, teste com mais de 4 observaççoes
-      idx = [0, len(R) // 3, 2 * len(R) // 3, -1]
-      R_select = np.array([R[i] for i in idx])
-      rho_hat_select = np.array([rho_hat[i] for i in idx])
-      t_select = [t[i] for i in idx]
-      
-   t0 = t_select[0]
-   dt = [(ti - t0).total_seconds() / 86400 for ti in t_select]
-   D = []
-   for i in range(len(rho_hat_select) - 1):
-      D.append(np.cross(rho_hat_select[i], rho_hat_select[i+1]))
-   D_norms = [np.linalg.norm(d) for d in D]
-   is_collinear = any(d_norm < 1e-10 for d_norm in D_norms)
-   if is_collinear:
-      print("Detectadas observações quase colineares. Usando método alternativo.") # caso de observações colineares, é um problema que tive em alguns testes
-      ang_velocities = []
-      for i in range(len(rho_hat) - 1):
-         dot_prod = np.clip(np.dot(rho_hat[i], rho_hat[i+1]), -1.0, 1.0)
-         ang = np.arccos(dot_prod)
-         dt_days = (t[i+1] - t[i]).total_seconds() / 86400
-         ang_velocities.append(ang / dt_days)
-      avg_ang_velocity = np.mean(ang_velocities)
-      
-      # estimar distancia usando velocidade angular media
-      # Para NEOs típicos a ~1AU com velocidade orbital ~30 km/s
-      estimated_rho = 0.01 / avg_ang_velocity if avg_ang_velocity > 1e-10 else 1.5
-      estimated_rho = np.clip(estimated_rho, 0.1, 5.0)
-      r0 = R[0] + estimated_rho * rho_hat[0]
-      dt1 = (t[1] - t[0]).total_seconds() / 86400
-      rho_dot = (rho_hat[1] - rho_hat[0]) / dt1
-      v0 = R[1] - R[0] + estimated_rho * rho_dot
-      return r0, v0 / dt1
-   
-   # metodo classico para nao colineares
-   A = np.zeros((len(rho_hat_select), len(rho_hat_select)))
-   for i in range(len(rho_hat_select)):
-      A[i, i] = 1.0
-      for j in range(len(rho_hat_select)):
-         if i != j:
-               A[i, j] = -np.dot(rho_hat_select[i], rho_hat_select[j])
-   
-   # Vetor de termos independentes
-   b = np.zeros(len(rho_hat_select))
-   for i in range(len(rho_hat_select) - 1):
-      b[i] = np.dot(R_select[i+1] - R_select[i], rho_hat_select[i])
-   b[-1] = np.dot(R_select[0] - R_select[-1], rho_hat_select[-1])
-   try:
-      rho = np.linalg.solve(A, b)
-      if any(r <= 0 or r > 10 for r in rho):
-         print("Distâncias calculadas nao razoáveis.")
-         return None, None
-      r = np.zeros((len(rho_hat_select), 3))
-      for i in range(len(rho_hat_select)):
-         r[i] = R_select[i] + rho[i] * rho_hat_select[i]
-      if len(dt) >= 3:
-         y = r.copy()
-         X = np.column_stack([np.ones(len(dt)), np.array(dt)])
-         coeffs = np.zeros((3, 2))
-         for i in range(3):
-               coeffs[i], _, _, _ = np.linalg.lstsq(X, y[:, i], rcond=None)
-         r0 = coeffs[:, 0]
-         v0 = coeffs[:, 1]
-      else:
-         try: 
-            # teste
-            f1, g1 = calculate_f_and_g(dt[1], r[0], MU_SUN)
-            f2, g2 = calculate_f_and_g(dt[-1], r[0], MU_SUN)
-            A_v = np.array([[f1, g1], [f2, g2]])
-            b_v = np.array([r[1], r[-1]])
-            v0 = np.zeros(3)
-            for i in range(3):
-               sol = np.linalg.lstsq(A_v, [b_v[0][i], b_v[1][i]], rcond=None)[0]
-               v0[i] = sol[1]
-         except:
-               v0 = (r[1] - r[0]) / dt[1]
-
-      v_norm = np.linalg.norm(v0)
-      if v_norm > 0.2:  # > 120 km/s é fisicamente improvável
-         print(f"Velocidade inicial muito alta: {v_norm:.6f} AU/dia")
-         v0 = v0 * (0.1 / v_norm)
-      
-      return r[0], v0
-   
-   except np.linalg.LinAlgError as e:
-      print(f"Erro na estimativa: {e}")
-      return None, None
-
-
-# --------------------------------------------------------------------------------------------------------
 def differential_correction(R, v_earth, rho_hat, t, mu_sun, perturbations=None):
-   """
-   Applies differential correction to refine the initial estimate of the object's orbit
+    """
+    Applies differential correction to refine the initial estimate of the object's orbit
 
-   Args:
-      R (list): List of position vectors (earth)
-      v_earth (list): List of velocity vectors (earth)
-      rho_hat (list): List of unit direction vectors
-      t (list): List of datetime objects
-      mu_sun (float): Gravitational parameter of the Sun
+    Args:
+        R (list): List of position vectors (earth)
+        v_earth (list): List of velocity vectors (earth)
+        rho_hat (list): List of unit direction vectors
+        t (list): List of datetime objects
+        mu_sun (float): Gravitational parameter of the Sun
+    
+    Returns:
+        np.array: Refined position vector
+        np.array: Refined velocity vector
+    """
+    r_initial, v_initial = gauss_iod_method(R, rho_hat, t)   
    
-   Returns:
-      np.array: Refined position vector
-      np.array: Refined velocity vector
-   """
-#    r_initial, v_initial = iod_initial_estimate(R, rho_hat, t)
-   r_initial, v_initial = gauss_iod_method(R, rho_hat, t)   
-   if r_initial is None:
-      best_result = None
-      best_cost = float('inf')
-      r_earth_sun = np.linalg.norm(R[0])
-      bounds = [
-         # Posição: região dentro de 5 AU do Sol
-         (-5.0, 5.0), (-5.0, 5.0), (-5.0, 5.0),
-         # Velocidade: até 0.07
-         (-0.07, 0.07), (-0.07, 0.07), (-0.07, 0.07)
-      ]
-      def objective(params):
-         r0, v0 = params[:3], params[3:]
-         r_norm = np.linalg.norm(r0)
-         if r_norm < 0.1 or r_norm > 10.0:
-               return 1e10
-         
-         try:
-            r_pred, _ = propagate_orbit(r0, v0, t, t[0], mu_sun)
-            cost = 0
-            weights = np.linspace(1.0, 0.8, len(t))
-            
-            for i in range(len(t)):
-               rho_vec = r_pred[i] - R[i]
-               rho_norm = np.linalg.norm(rho_vec)
-               if rho_norm < 1e-10:
-                  return 1e10
-               rho_pred = rho_vec / rho_norm
-               ang_error = np.arccos(np.clip(np.dot(rho_pred, rho_hat[i]), -1.0, 1.0))
-               cost += weights[i] * ang_error**2
+    if r_initial is None:
+        best_result = None
+        best_cost = float('inf')
+        r_earth_sun = np.linalg.norm(R[0])
+        bounds = [
+            # Posição: região dentro de 5 AU do Sol
+            (-5.0, 5.0), (-5.0, 5.0), (-5.0, 5.0),
+            # Velocidade: até 0.07
+            (-0.07, 0.07), (-0.07, 0.07), (-0.07, 0.07)
+        ]
+        def objective(params):
+            r0, v0 = params[:3], params[3:]
             r_norm = np.linalg.norm(r0)
-            v_norm = np.linalg.norm(v0)
-            energy = v_norm**2 / 2 - mu_sun / r_norm
-            h = np.cross(r0, v0)
-            h_norm = np.linalg.norm(h)
-            if h_norm > 1e-10:
-               e_vec = np.cross(v0, h) / mu_sun - r0 / r_norm
-               e = np.linalg.norm(e_vec)
-               if energy > 0:  
-                  cost += 200 * energy  
-               elif -mu_sun / (2 * energy) > 5.0: 
-                  cost += 50 * (-mu_sun / (2 * energy) - 5.0)
-               if e > 0.95: 
-                  cost += 100 * (e - 0.95)**2
-            return cost
-         except Exception:
-               return 1e10
-      for trial in range(7): 
-         r_scale = 0.7 + 0.3 * trial 
-         v_scale = 0.008 + 0.008 * trial
-         x0 = np.zeros(6)
-         random_offset = np.random.uniform(-0.05, 0.05, 3) if trial > 0 else np.zeros(3)
-         x0[:3] = R[0] + r_scale * (rho_hat[0] + random_offset)
-         rho_hat_dot = estimate_angular_velocity(rho_hat, t)
-         v_offset = np.random.uniform(-0.003, 0.003, 3) if trial > 0 else np.zeros(3)
-         x0[3:] = v_earth[0] + v_scale * rho_hat[0] + r_scale * rho_hat_dot + v_offset
-         try:
-            methods = ['Nelder-Mead', 'Powell'] if trial < 2 else ['Nelder-Mead']
-            for method in methods:
-               result = minimize(objective, x0, method=method, bounds=bounds, options={'maxiter': 1500})
-               if result.fun < best_cost:
-                  best_cost = result.fun
-                  best_result = result.x
-         except:
-               continue
-      if best_result is not None:
-         r_initial, v_initial = best_result[:3], best_result[3:]
-      else:
-         # Se tudo falhar -> tentar otimização global 
-         try:
-            with warnings.catch_warnings():
-               warnings.simplefilter("ignore")
-               result = differential_evolution(objective, bounds, popsize=25, maxiter=40, strategy='best1bin', tol=1e-7)
-            r_initial, v_initial = result.x[:3], result.x[3:]
-         except:
-               print("Falha na otimização global.")
-               return None, None
-   if r_initial is None:
-      return None, None
+            if r_norm < 0.1 or r_norm > 10.0:
+                return 1e10
+         
+            try:
+                r_pred, _ = propagate_orbit(r0, v0, t, t[0], mu_sun)
+                cost = 0
+                weights = np.linspace(1.0, 0.8, len(t))
+            
+                for i in range(len(t)):
+                    rho_vec = r_pred[i] - R[i]
+                    rho_norm = np.linalg.norm(rho_vec)
+                    if rho_norm < 1e-10:
+                        return 1e10
+                    rho_pred = rho_vec / rho_norm
+                    ang_error = np.arccos(np.clip(np.dot(rho_pred, rho_hat[i]), -1.0, 1.0))
+                    cost += weights[i] * ang_error**2
+                r_norm = np.linalg.norm(r0)
+                v_norm = np.linalg.norm(v0)
+                energy = v_norm**2 / 2 - mu_sun / r_norm
+                h = np.cross(r0, v0)
+                h_norm = np.linalg.norm(h)
+                if h_norm > 1e-10:
+                    e_vec = np.cross(v0, h) / mu_sun - r0 / r_norm
+                e = np.linalg.norm(e_vec)
+                if energy > 0:  
+                    cost += 200 * energy  
+                elif -mu_sun / (2 * energy) > 5.0: 
+                    cost += 50 * (-mu_sun / (2 * energy) - 5.0)
+                if e > 0.95: 
+                    cost += 100 * (e - 0.95)**2
+                return cost
+            except Exception:
+                return 1e10
+        for trial in range(7): 
+            r_scale = 0.7 + 0.3 * trial 
+            v_scale = 0.008 + 0.008 * trial
+            x0 = np.zeros(6)
+            random_offset = np.random.uniform(-0.05, 0.05, 3) if trial > 0 else np.zeros(3)
+            x0[:3] = R[0] + r_scale * (rho_hat[0] + random_offset)
+            rho_hat_dot = estimate_angular_velocity(rho_hat, t)
+            v_offset = np.random.uniform(-0.003, 0.003, 3) if trial > 0 else np.zeros(3)
+            x0[3:] = v_earth[0] + v_scale * rho_hat[0] + r_scale * rho_hat_dot + v_offset
+            try:
+                methods = ['Nelder-Mead', 'Powell'] if trial < 2 else ['Nelder-Mead']
+                for method in methods:
+                    result = minimize(objective, x0, method=method, bounds=bounds, options={'maxiter': 1500})
+                    if result.fun < best_cost:
+                        best_cost = result.fun
+                        best_result = result.x
+            except:
+                continue
+        if best_result is not None:
+            r_initial, v_initial = best_result[:3], best_result[3:]
+        else:
+            # Se tudo falhar -> tentar otimização global 
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                result = differential_evolution(objective, bounds, popsize=25, maxiter=40, strategy='best1bin', tol=1e-7)
+                r_initial, v_initial = result.x[:3], result.x[3:]
+            except:
+                print("Falha na otimização global.")
+                return None, None
+    if r_initial is None:
+        return None, None
    
-   def residuals(params):
-      r0, v0 = params[:3], params[3:]
-      r_norm = np.linalg.norm(r0)
-      v_norm = np.linalg.norm(v0)
-      energy = 0.5 * v_norm**2 - mu_sun / r_norm
-      h = np.cross(r0, v0)
-      h_norm = np.linalg.norm(h)
-      penalty = 0
-      if h_norm > 1e-10:
-         a = -mu_sun / (2 * energy) if energy < 0 else float('inf')
-         e_vec = np.cross(v0, h) / mu_sun - r0 / r_norm
-         e = np.linalg.norm(e_vec)
-         if energy > 0:  # Órbita hiperbólica
-            penalty += 500 * energy
-         elif a < 0.3:  # Órbita muito pequena
-            penalty += 100 * (0.3 - a)**2
-         elif a > 5.0:  # Órbita muito grande
-            penalty += 50 * (a - 5.0)**2
-         if e > 0.98:  # Excentricidade muito alta
-            penalty += 200 * (e - 0.98)**2
-      else:
-         penalty += 1000
-      try:
-         r_pred, _ = propagate_orbit(r0, v0, t, t[0], mu_sun, perturbations)
-      except Exception as e:
-         return np.ones(len(t) * 3) * 1e8 + penalty
-      weights = np.linspace(1.2, 0.8, len(t))
-      resid = []
-      for i in range(len(t)):
-         rho_vec = r_pred[i] - R[i]
-         rho_norm = np.linalg.norm(rho_vec)
-         if rho_norm < 1e-10:
-               return np.ones(len(t) * 3) * 1e8 + penalty
-         rho_pred = rho_vec / rho_norm
-         resid.append((rho_pred - rho_hat[i]) * weights[i])
-      flat_resid = np.concatenate(resid)
-      if penalty > 0:
-         flat_resid = flat_resid + penalty * np.ones_like(flat_resid) / len(flat_resid)
-      return flat_resid
+    def residuals(params):
+        r0, v0 = params[:3], params[3:]
+        r_norm = np.linalg.norm(r0)
+        v_norm = np.linalg.norm(v0)
+        energy = 0.5 * v_norm**2 - mu_sun / r_norm
+        h = np.cross(r0, v0)
+        h_norm = np.linalg.norm(h)
+        penalty = 0
+        if h_norm > 1e-10:
+            a = -mu_sun / (2 * energy) if energy < 0 else float('inf')
+            e_vec = np.cross(v0, h) / mu_sun - r0 / r_norm
+            e = np.linalg.norm(e_vec)
+            if energy > 0:  # Órbita hiperbólica
+                penalty += 500 * energy
+            elif a < 0.3:  # Órbita muito pequena
+                penalty += 100 * (0.3 - a)**2
+            elif a > 5.0:  # Órbita muito grande
+                penalty += 50 * (a - 5.0)**2
+            if e > 0.98:  # Excentricidade muito alta
+                penalty += 200 * (e - 0.98)**2
+        else:
+            penalty += 1000
+        try:
+            r_pred, _ = propagate_orbit(r0, v0, t, t[0], mu_sun, perturbations)
+        except Exception as e:
+            return np.ones(len(t) * 3) * 1e8 + penalty
+        weights = np.linspace(1.2, 0.8, len(t))
+        resid = []
+        for i in range(len(t)):
+            rho_vec = r_pred[i] - R[i]
+            rho_norm = np.linalg.norm(rho_vec)
+            if rho_norm < 1e-10:
+                return np.ones(len(t) * 3) * 1e8 + penalty
+            rho_pred = rho_vec / rho_norm
+            resid.append((rho_pred - rho_hat[i]) * weights[i])
+        flat_resid = np.concatenate(resid)
+        if penalty > 0:
+            flat_resid = flat_resid + penalty * np.ones_like(flat_resid) / len(flat_resid)
+        return flat_resid
    
    # rfinamento final com least_squares usando bounds mais amplos
-   initial_params = np.hstack((r_initial, v_initial))
-   bounds = ([-15, -15, -15, -0.15, -0.15, -0.15], [15, 15, 15, 0.15, 0.15, 0.15])
+    initial_params = np.hstack((r_initial, v_initial))
+    bounds = ([-15, -15, -15, -0.15, -0.15, -0.15], [15, 15, 15, 0.15, 0.15, 0.15])
    
-   try:
-      result = least_squares(residuals, initial_params, method='trf', bounds=bounds, ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=10000, verbose=0)
-      r_final, v_final = result.x[:3], result.x[3:]
-      r_norm = np.linalg.norm(r_final)
-      v_norm = np.linalg.norm(v_final)
-      energy = 0.5 * v_norm**2 - mu_sun / r_norm
-      a = -mu_sun / (2 * energy) if energy < 0 else float('inf')
-      h = np.cross(r_final, v_final)
-      h_norm = np.linalg.norm(h)
-      if h_norm > 1e-10:
-         e_vec = np.cross(v_final, h) / mu_sun - r_final / r_norm
-         e = np.linalg.norm(e_vec)
-         i = np.degrees(np.arccos(abs(h[2]) / h_norm))
-         if energy > 0: 
-            print(f"Solução hiperbólica: energy={energy:.8f}, e={e:.6f}")
-            if energy > 1e-4: 
-               return None, None
-         elif a > 10.0:
-            print(f"Solução com semi-eixo maior excessivo: a={a:.6f} AU")
+    try:
+        result = least_squares(residuals, initial_params, method='trf', bounds=bounds, ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=10000, verbose=0)
+        r_final, v_final = result.x[:3], result.x[3:]
+        r_norm = np.linalg.norm(r_final)
+        v_norm = np.linalg.norm(v_final)
+        energy = 0.5 * v_norm**2 - mu_sun / r_norm
+        a = -mu_sun / (2 * energy) if energy < 0 else float('inf')
+        h = np.cross(r_final, v_final)
+        h_norm = np.linalg.norm(h)
+        if h_norm > 1e-10:
+            e_vec = np.cross(v_final, h) / mu_sun - r_final / r_norm
+            e = np.linalg.norm(e_vec)
+            i = np.degrees(np.arccos(abs(h[2]) / h_norm))
+            if energy > 0: 
+                print(f"Solução hiperbólica: energy={energy:.8f}, e={e:.6f}")
+                if energy > 1e-4: 
+                    return None, None
+            elif a > 10.0:
+                print(f"Solução com semi-eixo maior excessivo: a={a:.6f} AU")
+                return None, None
+            elif e > 0.99:
+                print(f"Solução com excentricidade excessiva: e={e:.6f}")
+                return None, None
+            print(f"Solução aceita: a={a:.6f} AU, e={e:.6f}, i={i:.6f}°")
+            return r_final, v_final
+        else:
+            print("Solução com momento angular quase nulo.")
             return None, None
-         elif e > 0.99:
-            print(f"Solução com excentricidade excessiva: e={e:.6f}")
-            return None, None
-         print(f"Solução aceita: a={a:.6f} AU, e={e:.6f}, i={i:.6f}°")
-         return r_final, v_final
-      else:
-         print("Solução com momento angular quase nulo.")
-         return None, None
-   except Exception as e:
-      print(f"Erro no refinamento: {e}")
-      return None, None
+    except Exception as e:
+        print(f"Erro no refinamento: {e}")
+        return None, None
 
 
 # --------------------------------------------------------------------------------------------------------
@@ -571,7 +433,7 @@ def process_asteroid(name, observations, observatory=None):
    """
    Processa observações de um asteroide e determina sua órbita
    """
-   print(f"\n### Calculando órbita de {name} usando {len(observations)} observaçoes###")
+   print(f"\n### Calculando órbita de {name} usando {len(observations)} observaçoes ###")
    t = [obs["timestamp"] for obs in observations]
    rho_hat = [convert_to_cartesian(obs["RA"], obs["DEC"]) for obs in observations]
    R, v_earth = get_earth_position_and_velocity(t, observatory)
@@ -697,14 +559,10 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
         np.array: Vetor posição inicial r2 no tempo t2
         np.array: Vetor velocidade inicial v2 no tempo t2
     """
-    import numpy as np
-
-    # Verificar a normalização dos vetores de direção
-    for i, rh in enumerate(rho_hat):
-        rh_norm = np.linalg.norm(rh)
-        if abs(rh_norm - 1.0) > 1e-10:
-            print(f"Aviso: rho_hat[{i}] não é unitário. Normalizando...")
-            rho_hat[i] = rho_hat[i] / rh_norm
+    # for i, rh in enumerate(rho_hat):
+    #     rh_norm = np.linalg.norm(rh)
+    #     if abs(rh_norm - 1.0) > 1e-10:
+    #         rho_hat[i] = rho_hat[i] / rh_norm
     
     # Need exactly 3 observations for classic Gauss method
     if len(R) < 3:
@@ -724,18 +582,18 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
     tau = tau3 - tau1
     
     # Verificar a geometria das observações
-    angle_12 = np.arccos(np.clip(np.dot(rho_hat[0], rho_hat[1]), -1.0, 1.0)) * 180/np.pi
-    angle_23 = np.arccos(np.clip(np.dot(rho_hat[1], rho_hat[2]), -1.0, 1.0)) * 180/np.pi
-    angle_13 = np.arccos(np.clip(np.dot(rho_hat[0], rho_hat[2]), -1.0, 1.0)) * 180/np.pi
+    # angle_12 = np.arccos(np.clip(np.dot(rho_hat[0], rho_hat[1]), -1.0, 1.0)) * 180/np.pi
+    # angle_23 = np.arccos(np.clip(np.dot(rho_hat[1], rho_hat[2]), -1.0, 1.0)) * 180/np.pi
+    # angle_13 = np.arccos(np.clip(np.dot(rho_hat[0], rho_hat[2]), -1.0, 1.0)) * 180/np.pi
     
-    print(f"Ângulo entre observações: 1-2: {angle_12:.2f}°, 2-3: {angle_23:.2f}°, 1-3: {angle_13:.2f}°")
+    # print(f"Ângulo entre observações: 1-2: {angle_12:.2f}°, 2-3: {angle_23:.2f}°, 1-3: {angle_13:.2f}°")
     
-    if angle_12 < 0.25 or angle_23 < 0.25:
-        print("Alerta: Ângulo entre observações muito pequeno (<0.25°). A solução pode ser instável.")
+    # if angle_12 < 0.25 or angle_23 < 0.25:
+        # print("Alerta: Ângulo entre observações muito pequeno (<0.25°). A solução pode ser instável.")
     
     # For very short arcs, the method might be numerically unstable
-    if abs(tau) < 0.05:  # Menos que ~1.2 horas
-        print(f"Alerta: Arco muito curto ({abs(tau)*24:.1f} horas), resultados podem ser instáveis")
+    # if abs(tau) < 0.05:  # Menos que ~1.2 horas
+        # print(f"Alerta: Arco muito curto ({abs(tau)*24:.1f} horas), resultados podem ser instáveis")
     
     # Coeficientes de Lagrange mais precisos
     def better_f_and_g(tau, r_mag, mu):
@@ -805,7 +663,7 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
     best_delta_v = float('inf')
     
     for start_attempt, rho2_initial in enumerate(starting_points):
-        print(f"\nTentativa {start_attempt+1} com distância inicial estimada: {rho2_initial:.2f} UA")
+        # print(f"\nTentativa {start_attempt+1} com distância inicial estimada: {rho2_initial:.2f} UA")
         
         try:
             # Adicionar regularização mais forte para evitar matrizes singulares
@@ -948,50 +806,8 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
     
     # Calcular elementos orbitais para validação
     try:
-        def calculate_orbital_elements(r, v, mu):
-            """Calcula elementos orbitais a partir de vetores posição e velocidade"""
-            # Vetor momento angular específico
-            h = np.cross(r, v)
-            h_mag = np.linalg.norm(h)
-            
-            # Vetor excentricidade
-            e_vec = np.cross(v, h) / mu - r / np.linalg.norm(r)
-            e = np.linalg.norm(e_vec)
-            
-            # Energia específica
-            energy = np.linalg.norm(v)**2 / 2 - mu / np.linalg.norm(r)
-            
-            # Semieixo maior
-            if abs(energy) < 1e-10:  # Órbita parabólica
-                a = float('inf')
-            else:
-                a = -mu / (2 * energy)
-            
-            # Inclinação
-            inc = np.arccos(h[2] / h_mag) * 180 / np.pi
-            
-            # Longitude do nodo ascendente
-            n = np.array([-h[1], h[0], 0])
-            n_mag = np.linalg.norm(n)
-            
-            if n_mag < 1e-10:
-                omega = 0  # Órbita equatorial
-            else:
-                omega = np.arccos(n[0] / n_mag) * 180 / np.pi
-                if n[1] < 0:
-                    omega = 360 - omega
-            
-            # Argumento do pericentro
-            if n_mag < 1e-10 or e < 1e-10:
-                w = 0  # Órbita circular ou equatorial
-            else:
-                w = np.arccos(np.dot(n, e_vec) / (n_mag * e)) * 180 / np.pi
-                if e_vec[2] < 0:
-                    w = 360 - w
-            
-            return a, e, inc, omega, w, 0  # Último valor é anomalia média
-        
-        a, e, inc, _, _, _ = calculate_orbital_elements(r, v, mu)
+        # Usar a função existente de cálculo de elementos orbitais
+        a, e, inc, omega, w, theta = calculate_orbital_elements(r, v, mu)
         
         # Verificar valores infinitos ou NaN
         if not np.isfinite(a) or not np.isfinite(e) or not np.isfinite(inc):
@@ -1061,6 +877,6 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
     
     except Exception as e:
         print(f"Erro no cálculo de elementos orbitais: {e}")
-        # Retornar vetores mesmo com problemas nos elementos
         print("Retornando vetores estado, mas elementos orbitais não puderam ser calculados")
         return r, v
+    
