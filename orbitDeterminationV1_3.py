@@ -559,17 +559,11 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
         np.array: Vetor posição inicial r2 no tempo t2
         np.array: Vetor velocidade inicial v2 no tempo t2
     """
-    # for i, rh in enumerate(rho_hat):
-    #     rh_norm = np.linalg.norm(rh)
-    #     if abs(rh_norm - 1.0) > 1e-10:
-    #         rho_hat[i] = rho_hat[i] / rh_norm
-    
-    # Need exactly 3 observations for classic Gauss method
+
     if len(R) < 3:
         print("Método de Gauss requer pelo menos 3 observações")
         return None, None
     
-    # If more than 3 observations, use the first, middle, and last
     if len(R) > 3:
         indices = [0, len(R) // 2, -1]
         R = [R[i] for i in indices]
@@ -579,22 +573,7 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
     # Compute time differences in days
     tau1 = (t[0] - t[1]).total_seconds() / 86400.0
     tau3 = (t[2] - t[1]).total_seconds() / 86400.0
-    tau = tau3 - tau1
-    
-    # Verificar a geometria das observações
-    # angle_12 = np.arccos(np.clip(np.dot(rho_hat[0], rho_hat[1]), -1.0, 1.0)) * 180/np.pi
-    # angle_23 = np.arccos(np.clip(np.dot(rho_hat[1], rho_hat[2]), -1.0, 1.0)) * 180/np.pi
-    # angle_13 = np.arccos(np.clip(np.dot(rho_hat[0], rho_hat[2]), -1.0, 1.0)) * 180/np.pi
-    
-    # print(f"Ângulo entre observações: 1-2: {angle_12:.2f}°, 2-3: {angle_23:.2f}°, 1-3: {angle_13:.2f}°")
-    
-    # if angle_12 < 0.25 or angle_23 < 0.25:
-        # print("Alerta: Ângulo entre observações muito pequeno (<0.25°). A solução pode ser instável.")
-    
-    # For very short arcs, the method might be numerically unstable
-    # if abs(tau) < 0.05:  # Menos que ~1.2 horas
-        # print(f"Alerta: Arco muito curto ({abs(tau)*24:.1f} horas), resultados podem ser instáveis")
-    
+
     # Coeficientes de Lagrange mais precisos
     def better_f_and_g(tau, r_mag, mu):
         """Coeficientes de Lagrange mais precisos para arcos curtos"""
@@ -603,19 +582,11 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
         g = tau - (1/6) * u * tau**3 + (1/120) * u**2 * tau**5
         return f, g
     
-    # Initial guess for r2_mag (Earth-object distance)
-    r2_mag_guess = 1.5  # 1.5 AU is reasonable for many solar system objects
-    
-    # Initial Lagrange coefficients 
+    r2_mag_guess = 1.5
     f1, g1 = better_f_and_g(tau1, r2_mag_guess, mu)
     f3, g3 = better_f_and_g(tau3, r2_mag_guess, mu)
-    
-    # Set up scalar equation of Gauss
-    # Create matrix of direction vectors
     D0 = np.column_stack([rho_hat[0], rho_hat[1], rho_hat[2]])
     D = np.zeros((3, 3))
-    
-    # Compute needed determinants
     D[0, 0] = np.linalg.det(np.column_stack([rho_hat[1], rho_hat[2], R[1]]))
     D[0, 1] = np.linalg.det(np.column_stack([rho_hat[0], rho_hat[2], R[1]]))
     D[0, 2] = np.linalg.det(np.column_stack([rho_hat[0], rho_hat[1], R[1]]))
@@ -625,23 +596,15 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
     D[2, 0] = np.linalg.det(np.column_stack([rho_hat[1], rho_hat[2], R[2]]))
     D[2, 1] = np.linalg.det(np.column_stack([rho_hat[0], rho_hat[2], R[2]]))
     D[2, 2] = np.linalg.det(np.column_stack([rho_hat[0], rho_hat[1], R[2]]))
-    
-    # Determinant of the direction cosines
     D0_det = np.linalg.det(D0)
-    
-    # Check if observations are co-planar
-    if abs(D0_det) < 1e-8:  # Limiar aumentado para maior segurança
+
+    if abs(D0_det) < 1e-8: 
         print("Alerta: Observações quase coplanares. Tentando correção...")
-        D0_det = np.sign(D0_det) * 1e-8  # Evitar divisão por zero
-        
-        # Para observações coplanares, sugerir abordagem alternativa
-        print("Considere usar o método de Laplace para este caso.")
-    
-    # Set up the linear system for finding the slant ranges
+        D0_det = np.sign(D0_det) * 1e-8 
+        # talvez usar o metodo de laplace nesses casos
+
     A = np.zeros((3, 3))
     b = np.zeros(3)
-    
-    # For short arcs, we can use simplified expressions
     A[0, 0] = -D[0, 0] / D0_det
     A[0, 1] = D[0, 1] / D0_det
     A[0, 2] = -D[0, 2] / D0_det
@@ -651,52 +614,35 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
     A[2, 0] = -D[2, 0] / D0_det
     A[2, 1] = D[2, 1] / D0_det
     A[2, 2] = -D[2, 2] / D0_det
-    
-    # Right hand side
     b[0] = -np.dot(rho_hat[1], R[0])
     b[1] = -np.dot(rho_hat[1], R[1])
     b[2] = -np.dot(rho_hat[1], R[2])
-    
-    # Multiple starting points to try
     starting_points = [1.0, 1.5, 2.0, 2.5]
     best_solution = None
     best_delta_v = float('inf')
     
     for start_attempt, rho2_initial in enumerate(starting_points):
-        # print(f"\nTentativa {start_attempt+1} com distância inicial estimada: {rho2_initial:.2f} UA")
-        
         try:
-            # Adicionar regularização mais forte para evitar matrizes singulares
             A_reg = A + np.eye(3) * 1e-5
-            
-            # Primeiro, tente resolver diretamente
+
             if start_attempt == 0:
                 try:
                     rho = np.linalg.solve(A_reg, b)
                     print(f"Distâncias calculadas: {rho[0]:.4f}, {rho[1]:.4f}, {rho[2]:.4f} UA")
-                    
-                    # Verificar se as distâncias são razoáveis
                     if all(0.1 <= r <= 10 for r in rho):
                         r1 = R[0] + rho[0] * rho_hat[0]
                         r2 = R[1] + rho[1] * rho_hat[1]
                         r3 = R[2] + rho[2] * rho_hat[2]
-                        
-                        # Recomputar coeficientes de Lagrange com a nova estimativa
                         r2_mag = np.linalg.norm(r2)
                         f1, g1 = better_f_and_g(tau1, r2_mag, mu)
                         f3, g3 = better_f_and_g(tau3, r2_mag, mu)
-                        
                         v2_from_1 = (r1 - f1 * r2) / g1
                         v2_from_3 = (r3 - f3 * r2) / g3
-                        
-                        # Checar consistência
                         delta_v = np.linalg.norm(v2_from_1 - v2_from_3)
-                        if delta_v < 0.01:  # ~170 m/s, bastante razoável
+                        if delta_v < 0.01: 
                             v = (v2_from_1 + v2_from_3) / 2
                             r = r2
                             print(f"Solução direta com boa consistência (delta_v = {delta_v:.6f} UA/dia)")
-                            
-                            # Guardar como melhor solução potencial
                             if delta_v < best_delta_v:
                                 best_solution = (r, v, delta_v)
                                 best_delta_v = delta_v
@@ -705,156 +651,94 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
                 except np.linalg.LinAlgError:
                     print("Erro na solução direta, tentando método iterativo...")
             
-            # Método iterativo com melhor controle numérico
-            # Começar com um palpite razoável para rho2
             rho2 = rho2_initial
-            
-            # Iterate to refine the middle range
             best_iteration_delta_v = float('inf')
             best_iteration_result = None
             
-            for iteration in range(10):  # Aumentado para 10 iterações
-                # Compute position at middle observation
+            for iteration in range(10): 
                 r2 = R[1] + rho2 * rho_hat[1]
                 r2_mag = np.linalg.norm(r2)
-                
-                # Recomputar coeficientes de Lagrange com distância atualizada
                 f1, g1 = better_f_and_g(tau1, r2_mag, mu)
                 f3, g3 = better_f_and_g(tau3, r2_mag, mu)
-                
-                # Evitar divisão por zero ou valores muito pequenos
                 if abs(g1) < 1e-10 or abs(g3) < 1e-10:
                     print(f"Coeficientes g muito pequenos: g1={g1:.2e}, g3={g3:.2e}. Ajustando...")
-                    # Ajustar para evitar problemas numéricos
                     g1 = np.sign(g1) * max(abs(g1), 1e-10)
                     g3 = np.sign(g3) * max(abs(g3), 1e-10)
-                
-                # Compute ranges at other observations usando relações geométricas
-                # Para arcos curtos, essa aproximação é razoável
                 rho1 = np.dot(R[1] - R[0], rho_hat[1]) / np.dot(rho_hat[0], rho_hat[1]) + rho2 * np.dot(rho_hat[1], rho_hat[0])
                 rho3 = np.dot(R[1] - R[2], rho_hat[1]) / np.dot(rho_hat[2], rho_hat[1]) + rho2 * np.dot(rho_hat[1], rho_hat[2])
-                
-                # Limitar distâncias a valores razoáveis
                 rho1 = np.clip(rho1, 0.1, 10.0)
                 rho3 = np.clip(rho3, 0.1, 10.0)
-                
-                # Compute positions at all observations
                 r1 = R[0] + rho1 * rho_hat[0]
                 r3 = R[2] + rho3 * rho_hat[2]
-                
-                # Calcular vetores velocidade a partir das posições
                 try:
                     v2_from_1 = (r1 - f1 * r2) / g1
                     v2_from_3 = (r3 - f3 * r2) / g3
-                    
-                    # Verificar se velocidades são finitas
                     if not np.all(np.isfinite(v2_from_1)) or not np.all(np.isfinite(v2_from_3)):
                         raise ValueError("Velocidades infinitas detectadas")
-                    
-                    # Calcular velocidade média e diferença
                     v2 = (v2_from_1 + v2_from_3) / 2
                     delta_v = np.linalg.norm(v2_from_1 - v2_from_3)
-                    
-                    # Informações de debug
-                    # print(f"Iteração {iteration}: rho2 = {rho2:.6f} UA, delta_v = {delta_v:.6f} UA/dia, |v| = {np.linalg.norm(v2):.6f} UA/dia")
-                    
-                    # Salvar a melhor solução desta tentativa
                     if delta_v < best_iteration_delta_v:
                         best_iteration_delta_v = delta_v
                         best_iteration_result = (r2.copy(), v2.copy(), delta_v)
-                    
-                    # Critério de convergência
                     if delta_v < 0.0001:  # ~1.7 m/s, muito bom
                         print(f"Convergiu em {iteration+1} iterações!")
                         break
-                    
-                    # Ajuste adaptativo de rho2 baseado no produto escalar
                     dot_product = np.dot(v2_from_3 - v2_from_1, r2)
-                    adjustment = 0.15 * (1.0 / (iteration + 1))  # Reduzir ajuste gradualmente
-                    
-                    # Usar função de tangente hiperbólica para limitar o ajuste
+                    adjustment = 0.15 * (1.0 / (iteration + 1))
                     rho2_new = rho2 * (1 + adjustment * np.tanh(dot_product * min(0.1, delta_v)))
-                    
-                    # Verificar se o ajuste é razoável
                     if not np.isfinite(rho2_new) or abs(rho2_new - rho2) > 0.5:
                         print("Ajuste muito grande, limitando...")
                         rho2_new = rho2 + np.sign(rho2_new - rho2) * 0.1
-                    
                     rho2 = np.clip(rho2_new, 0.1, 10.0)
-                    
                 except Exception as e:
                     print(f"Erro no cálculo da velocidade: {e}")
                     break
             
-            # Usar o melhor resultado desta tentativa
             if best_iteration_result is not None:
                 if best_iteration_delta_v < best_delta_v:
                     best_solution = best_iteration_result
                     best_delta_v = best_iteration_delta_v
                     print(f"Nova melhor solução encontrada (delta_v = {best_delta_v:.6f} UA/dia)")
-        
         except Exception as e:
             print(f"Erro na tentativa {start_attempt+1}: {e}")
     
-    # Verificar se encontramos alguma solução
     if best_solution is None:
         print("Não foi possível encontrar uma solução estável.")
         return None, None
     
-    # Extrair a melhor solução
     r, v, delta_v = best_solution
-    
-    # Calcular elementos orbitais para validação
     try:
-        # Usar a função existente de cálculo de elementos orbitais
         a, e, inc, omega, w, theta = calculate_orbital_elements(r, v, mu)
-        
-        # Verificar valores infinitos ou NaN
         if not np.isfinite(a) or not np.isfinite(e) or not np.isfinite(inc):
             print("Elementos orbitais infinitos detectados, ajustando...")
-            
-            # Ajustar valores problemáticos
             if not np.isfinite(a):
-                if a > 0:  # Infinito positivo
-                    a = 100  # Órbita muito alongada, mas finita
-                else:  # Infinito negativo
-                    a = -100  # Órbita hiperbólica extrema
-            
+                if a > 0:  
+                    a = 100  
+                else:  
+                    a = -100  
             if not np.isfinite(e):
-                e = 0.99 if a > 0 else 1.01  # Ajustar excentricidade com base no semieixo
-            
+                e = 0.99 if a > 0 else 1.01 
             if not np.isfinite(inc):
-                inc = 0  # Assumir órbita no plano da eclíptica
-        
-        # Se a excentricidade for extremamente alta, ajustar para um valor mais razoável
+                inc = 0 
         if e > 1000:
             print(f"Excentricidade extremamente alta ({e:.4f}), ajustando para um valor mais razoável")
-            e = np.clip(e, 0, 10.0)  # Limitar a um máximo razoável
-        
+            e = np.clip(e, 0, 10.0)
         print(f"Solução pelo método de Gauss: a = {a:.4f} UA, e = {e:.4f}, i = {inc:.4f}°")
         print(f"Velocidade orbital: {np.linalg.norm(v)*1731:.1f} km/h")
-        
-        # Critérios mais flexíveis para órbitas válidas
         orbit_valid = False
-        
-        # Verificar se é uma órbita elíptica razoável
         if a > 0 and a < 100 and e < 0.99:
             print("Órbita elíptica razoável detectada")
             orbit_valid = True
-        # Verificar se é uma órbita hiperbólica razoável (para cometas, etc.)
         elif a < 0 and e > 1.0 and e < 10:
             print("Órbita hiperbólica detectada - possível objeto em trajetória de escape")
             orbit_valid = True
-        # Verificar se é uma órbita parabólica (e = 1)
         elif abs(e - 1.0) < 0.01 and a > 100:
             print("Órbita aproximadamente parabólica detectada")
             orbit_valid = True
-        
         if orbit_valid:
             return r, v
         else:
             print(f"Órbita não razoável: a = {a:.4f}, e = {e:.4f}")
-            
             if a > 100:
                 print("Semieixo maior muito grande - possível objeto muito distante ou erro numérico")
             elif a < -100:
@@ -863,18 +747,13 @@ def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
                 print("Excentricidade próxima ou pouco acima de 1 - verificar se é um cometa")
             elif e >= 1.5:
                 print("Excentricidade muito alta - provável erro numérico")
-            
             if best_delta_v > 0.01:
                 print(f"Alta inconsistência entre velocidades (delta_v = {best_delta_v:.6f} UA/dia)")
                 print("Provável causa: arco muito curto ou observações imprecisas")
-            
-            # Em caso de valores extremos, tentar retornar uma solução mesmo assim
-            if best_delta_v < 0.1:  # Se delta_v não for absurdamente alto
+            if best_delta_v < 0.1: 
                 print("Retornando solução de melhor esforço, mas use com cautela!")
                 return r, v
-            
             return None, None
-    
     except Exception as e:
         print(f"Erro no cálculo de elementos orbitais: {e}")
         print("Retornando vetores estado, mas elementos orbitais não puderam ser calculados")
