@@ -262,7 +262,7 @@ def process_asteroid(name, observations, observatory=None):
    
 
 # --------------------------------------------------------------------------------------------------------
-def gauss_iod_method(R, rho_hat, t, mu=0.000295912208):
+def gauss_iod_method(R, rho_hat, t, mu=MU_SUN):
     """
     Gauss Initial Orbit Determination method, optimized for short arcs.
     
