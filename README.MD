@@ -74,14 +74,6 @@ The module implements the following computational procedure:
 6. Applies light-travel time correction
 7. Calculates and reports the final orbital elements
 
-## Handling Edge Cases
-
-The module includes special handling for:
-- Collinear observations
-- Hyperbolic solutions
-- Orbits with excessive eccentricity
-- Failed convergence
-
 ## References
 
 Orbit determination methods are based on:
