@@ -1,7 +1,7 @@
 import numpy as np
 from skyfield.api import load
 from datetime import timedelta
-from coordinate_utils import get_topocentric_correction
+from .coordinate_utils import get_topocentric_correction
 eph = load('de440.bsp')
 
 def get_earth_position_and_velocity(times, observatory=None):

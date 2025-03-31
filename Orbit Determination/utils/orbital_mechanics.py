@@ -1,6 +1,6 @@
 import numpy as np
 from datetime import timedelta
-C_LIGHT = 173.1446
+from .constants import C_LIGHT
 
 def equations_of_motion(t, y, mu):
    """
