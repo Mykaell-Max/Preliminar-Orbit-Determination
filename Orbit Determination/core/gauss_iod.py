@@ -212,7 +212,7 @@ def validate_orbit(r, v, delta_v, mu):
                 logger.warning  ("Provável causa: arco muito curto ou observações imprecisas")
 
             if delta_v < 0.1: 
-                logger.info("Retornando solução de melhor esforço, mas use com cautela!")
+                logger.info("Retornando solução de melhor esforço!")
                 return True, r  , v
                 
             return False, None, None
@@ -237,7 +237,7 @@ def gauss_iod_method(R, rho_hat, t, mu=MU_SUN):
         np.array: Vetor posição inicial r2 no tempo t2
         np.array: Vetor velocidade inicial v2 no tempo t2
     """
-    # Check input data and select appropriate observations
+    
     if len(R) < 3:
         logger.error("Método de Gauss requer pelo menos 3 observações")
         return None, None
@@ -248,25 +248,20 @@ def gauss_iod_method(R, rho_hat, t, mu=MU_SUN):
         rho_hat = [rho_hat[i] for i in indices]
         t = [t[i] for i in indices]
     
-    # Compute time differences in days
     tau1 = (t[0] - t[1]).total_seconds() / 86400.0
     tau3 = (t[2] - t[1]).total_seconds() / 86400.0
 
-    # Setup initial matrices
     A, b = setup_matrices(R, rho_hat)
     
-    # Try different starting points
     starting_points = [1.0, 1.5, 2.0, 2.5]
     best_solution = None
     best_delta_v = float('inf')
     
-    # Initial direct solution attempt
     direct_r, direct_v, direct_delta_v = direct_solution(A, b, R, rho_hat, tau1, tau3, mu)
     if direct_r is not None and direct_delta_v < best_delta_v:
         best_solution = (direct_r, direct_v, direct_delta_v)
         best_delta_v = direct_delta_v
     
-    # Try iterative solutions with different starting points
     for rho2_initial in starting_points:
         try:
             iteration_result = iterative_solution(R, rho_hat, tau1, tau3, mu, rho2_initial)
@@ -280,12 +275,10 @@ def gauss_iod_method(R, rho_hat, t, mu=MU_SUN):
         except Exception as e:
             logger.error(f"Erro na tentativa com rho2_initial = {rho2_initial}: {e}")
     
-    # Check if we found a solution
     if best_solution is None:
         logger.error("Não foi possível encontrar uma solução estável.")
         return None, None
     
-    # Validate the orbit
     r, v, delta_v = best_solution
     is_valid, final_r, final_v = validate_orbit(r, v, delta_v, mu)
     
