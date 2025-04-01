@@ -21,7 +21,7 @@ def equations_of_motion(t, y, mu):
    return np.hstack((v, a))
 
 
-def calculate_orbital_elements(r, v, mu):
+def calculate_orbital_elements(r, v, mu, frame="equatorial"):
    """
    Calculates the orbital elements of an object given its position and velocity vectors
 
@@ -29,6 +29,7 @@ def calculate_orbital_elements(r, v, mu):
       r (np.array): Position vector
       v (np.array): Velocity vector
       mu (float): Gravitational parameter
+      frame (str): Reference frame of input vectors ("equatorial" or "ecliptic")
    
    Returns:
       float: Semi-major axis
@@ -42,13 +43,30 @@ def calculate_orbital_elements(r, v, mu):
    v_norm = np.linalg.norm(v)
    energy = v_norm**2 / 2 - mu / r_norm
    a = -mu / (2 * energy) if energy < 0 else float('inf')
+   
+   # transform to ecliptic before calculating elements
+   if frame == "equatorial":
+      # ecliptic obliquity in radians
+      eps = np.radians(23.4)
+      
+      # rotation matrix
+      R_eq_to_ecl = np.array([
+         [1, 0, 0],
+         [0, np.cos(eps), np.sin(eps)],
+         [0, -np.sin(eps), np.cos(eps)]
+      ])
+      r_ecl = R_eq_to_ecl @ r
+      v_ecl = R_eq_to_ecl @ v
+      r = r_ecl
+      v = v_ecl
+   
    h = np.cross(r, v)
    h_norm = np.linalg.norm(h)
    if h_norm < 1e-10:
       return float('inf'), float('inf'), float('inf'), float('inf'), float('inf'), float('inf')
    e_vec = np.cross(v, h) / mu - r / r_norm
    e = np.linalg.norm(e_vec)
-   i = np.degrees(np.arccos(h[2] / h_norm))
+   i = np.degrees(np.arccos(np.clip(h[2] / h_norm, -1.0, 1.0)))
    n = np.array([-h[1], h[0], 0])
    n_norm = np.linalg.norm(n)
    if n_norm < 1e-10:
