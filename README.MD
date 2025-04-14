@@ -1,10 +1,10 @@
-# Orbit Calculation Module
+# Orbit Determination Module
 
 A Python module for calculating the orbital elements of astronomical objects based on astrometric observations.
 
 ## Overview
 
-This module implements methods to determine an object's orbit in space based on observations from Earth. It uses the Gauss method and differential correction techniques to calculate the six Keplerian orbital elements that fully describe the object's trajectory around the Sun.
+This module implements methods to determine an object's orbit in space based on observations from Earth. It uses the Gauss method and differential correction techniques to calculate the six Keplerian orbital elements that fully describe the object's trajectory around the Sun. The module follows an object-oriented design with clear separation of concerns between data models and algorithms.
 
 ## Dependencies
 
@@ -15,6 +15,7 @@ This module implements methods to determine an object's orbit in space based on 
 
 ## Features
 
+- Object-oriented design for better organization and extensibility
 - Convert equatorial coordinates (RA, DEC) to Cartesian coordinates
 - Retrieve Earth position and velocity at observation times
 - Implement numerical integration of orbital motion
@@ -47,7 +48,7 @@ The module calculates the following orbital elements:
 ## Usage Example
 
 ```python
-from orbit_calculation import process_asteroid
+from determine_orbit import determine_orbit
 from datetime import datetime, timezone
 
 # Example observations for asteroid "Apophis"
@@ -59,7 +60,7 @@ observations = [
 ]
 
 # Process the observations and calculate orbital elements
-process_asteroid("Apophis", observations)
+a, e, i, Omega, omega, theta, r_vector, v_vector, rms_residual = determine_orbit("Apophis", observations)
 ```
 
 ## Algorithm Description
@@ -132,3 +133,11 @@ flowchart TD
     M --> P
     M --> Q
 ```
+
+## Architecture
+
+The project follows an object-oriented design with these key components:
+
+- **Observation Class**: Represents individual astrometric observations with RA/DEC coordinates
+- **OrbitSolution Class**: Encapsulates orbit state vectors and calculated orbital elements
+- **OrbitDeterminer Class**: Orchestrates the determination process from observations to final solution
